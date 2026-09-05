@@ -153,15 +153,16 @@ def generate_rag_report(
     the API.  Missing credentials, malformed model output, and provider
     failures intentionally fall back to a low-confidence template.
     """
+    client = None
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
 
         api_key = os.environ.get("LLM_API_KEY", "")
         if not api_key:
             return _fallback_report(user_data, village, category, competitors, language)
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        client = genai.Client(api_key=api_key)
         competitor_names = _names(competitors)
         scheme_names = _names(matched_schemes)
         lang_instruction = (
@@ -238,12 +239,13 @@ Generate a business advisory report in this exact JSON format:
   }}]
 }}"""
 
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "response_mime_type": "application/json",
-                "temperature": 0.3,
-            },
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.3,
+            ),
         )
         result = json.loads(response.text)
         if not isinstance(result, dict):
@@ -252,6 +254,9 @@ Generate a business advisory report in this exact JSON format:
     except Exception as exc:
         print(f"RAG Engine Error: {exc}")
         return _fallback_report(user_data, village, category, competitors, language)
+    finally:
+        if client is not None:
+            client.close()
 
 
 def chat_with_ai(
@@ -261,8 +266,10 @@ def chat_with_ai(
     language: str = "en",
 ) -> dict[str, Any]:
     """Answer a short follow-up question using only the supplied report context."""
+    client = None
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
 
         api_key = os.environ.get("LLM_API_KEY", "")
         if not api_key:
@@ -272,8 +279,7 @@ def chat_with_ai(
                 "sources": [],
             }
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        client = genai.Client(api_key=api_key)
         lang_instruction = "Respond in Hindi." if language == "hi" else "Respond in English."
         history_text = "\n".join(
             f"{item.get('role', 'user')}: {item.get('content', '')}"
@@ -294,9 +300,10 @@ RECENT CONVERSATION:
 {history_text or "None"}
 
 USER QUESTION: {message}"""
-        response = model.generate_content(
-            system_prompt,
-            generation_config={"temperature": 0.4},
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=system_prompt,
+            config=types.GenerateContentConfig(temperature=0.4),
         )
         return {
             "reply": response.text,
@@ -310,3 +317,6 @@ USER QUESTION: {message}"""
             "confidence": "Low",
             "sources": [],
         }
+    finally:
+        if client is not None:
+            client.close()

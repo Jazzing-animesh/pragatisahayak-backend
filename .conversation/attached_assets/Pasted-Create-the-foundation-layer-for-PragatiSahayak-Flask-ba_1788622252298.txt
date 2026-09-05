@@ -1,0 +1,341 @@
+Create the foundation layer for "PragatiSahayak" Flask backend. 
+Smart India Hackathon 2026 project — AI business advisory for 
+rural Indian entrepreneurs.
+
+You are building ONLY the foundation: Flask setup, database 
+models, seed data, and utility functions. Another team member 
+will build routes, and another will build calculation services.
+
+TECH: Python 3.11, Flask, Flask-CORS, Flask-SQLAlchemy, 
+SQLite (default for local dev), PyJWT, bcrypt, python-dotenv.
+
+CREATE THESE FILES WITH COMPLETE WORKING CODE:
+
+=== run.py ===
+from app import create_app
+import os
+
+app = create_app()
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
+
+=== app/__init__.py ===
+Flask app factory pattern:
+- def create_app():
+  - Load config from app.config.Config
+  - Initialize db (SQLAlchemy)
+  - Initialize CORS with origins="*"
+  - Register blueprints (import from app.routes — but for now 
+    just register a simple health blueprint since routes team 
+    hasn't built yet)
+  - Inside app context: db.create_all()
+  - Return app
+- Health check route: GET /api/health → 
+  {"status":"ok","project":"PragatiSahayak","version":"1.0"}
+
+=== app/config.py ===
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+class Config:
+    SQLALCHEMY_DATABASE_URI = os.environ.get(
+        'DATABASE_URL', 'sqlite:///pragatisahayak.db'
+    )
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    JWT_SECRET = os.environ.get('JWT_SECRET', 'default_secret_key')
+    LLM_API_KEY = os.environ.get('LLM_API_KEY', '')
+    FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
+
+=== app/models/__init__.py ===
+from app.models.location import State, District, Block, Village
+from app.models.category import BusinessCategory
+from app.models.scheme import GovernmentScheme
+from app.models.competitor import Competitor
+from app.models.user import User
+
+=== app/models/location.py ===
+from app import db
+
+class State(db.Model):
+    __tablename__ = 'states'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    name_hi = db.Column(db.String(100))
+    districts = db.relationship('District', backref='state', 
+                                cascade='all, delete-orphan')
+    
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "name_hi": self.name_hi}
+
+class District(db.Model):
+    __tablename__ = 'districts'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    state_id = db.Column(db.Integer, db.ForeignKey('states.id'), nullable=False)
+    lat = db.Column(db.Float)
+    lng = db.Column(db.Float)
+    blocks = db.relationship('Block', backref='district', 
+                             cascade='all, delete-orphan')
+    
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, 
+                "state_id": self.state_id, 
+                "lat": self.lat, "lng": self.lng}
+
+class Block(db.Model):
+    __tablename__ = 'blocks'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    district_id = db.Column(db.Integer, db.ForeignKey('districts.id'), nullable=False)
+    villages = db.relationship('Village', backref='block', 
+                               cascade='all, delete-orphan')
+    
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, 
+                "district_id": self.district_id}
+
+class Village(db.Model):
+    __tablename__ = 'villages'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    block_id = db.Column(db.Integer, db.ForeignKey('blocks.id'), nullable=False)
+    population = db.Column(db.Integer, default=3000)
+    literacy_rate = db.Column(db.Float, default=60.0)
+    primary_occupation = db.Column(db.String(100), default="Agriculture")
+    nearest_city_km = db.Column(db.Float, default=15.0)
+    lat = db.Column(db.Float)
+    lng = db.Column(db.Float)
+    
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, 
+                "block_id": self.block_id, 
+                "population": self.population,
+                "literacy_rate": self.literacy_rate,
+                "primary_occupation": self.primary_occupation,
+                "nearest_city_km": self.nearest_city_km,
+                "lat": self.lat, "lng": self.lng}
+
+=== app/models/category.py ===
+BusinessCategory model:
+- id, name (unique), name_hi, sector (Manufacturing/Service/Trading)
+- investment_min (BigInteger), investment_max (BigInteger)
+- typical_margin (Float, e.g. 25.0 for 25%)
+- risk_level (String: Low/Medium/High)
+- breakeven_months (Integer)
+- required_skills (Text, nullable)
+- to_dict() method
+
+=== app/models/scheme.py ===
+GovernmentScheme model:
+- id, name (unique), ministry, description (Text)
+- max_loan (BigInteger), min_loan (BigInteger, default 0)
+- interest_rate (Float), subsidy_percent (Float, default 0)
+- tenure_years (Integer, default 5)
+- eligibility_criteria (JSON — list of strings)
+- applicable_states (JSON — list of state names or ["All"])
+- applicable_categories (JSON — list of category names or ["All"])
+- application_url (String)
+- is_active (Boolean, default True)
+- to_dict() method
+
+=== app/models/competitor.py ===
+Competitor model:
+- id, name, category_id (FK to BusinessCategory)
+- village (String), block_id (FK to Block)
+- distance_km (Float), estimated_revenue (BigInteger)
+- years_active (Integer, default 3)
+- lat (Float), lng (Float)
+- to_dict() method
+
+=== app/models/user.py ===
+import bcrypt
+from datetime import datetime
+from app import db
+
+User model:
+- id, email (unique), password_hash (String), 
+  role (String, default "user"), created_at (DateTime, auto)
+- set_password(password): hash with bcrypt, store in password_hash
+- check_password(password): verify against hash
+- to_dict(): return id, email, role (NEVER return password_hash)
+
+=== app/utils/__init__.py ===
+Empty file
+
+=== app/utils/validators.py ===
+Helper functions:
+- validate_required_fields(data, fields): check all fields present, 
+  return (True, None) or (False, "Missing field: X")
+- validate_numeric(value, min_val, max_val, field_name): check range
+- sanitize_string(s): strip whitespace, limit length
+
+=== app/seed/seed_locations.py ===
+Seed script that populates 18 states × 3 districts × 2 blocks × 2 villages.
+
+MUST be idempotent (check if data exists before inserting).
+
+States with REAL data:
+1. Uttar Pradesh (उत्तर प्रदेश) — Lucknow(26.85,80.95), Kanpur(26.45,80.33), Varanasi(25.32,83.01)
+2. Madhya Pradesh (मध्य प्रदेश) — Bhopal(23.26,77.41), Indore(22.72,75.86), Jabalpur(23.18,79.99)
+3. Rajasthan (राजस्थान) — Jaipur(26.91,75.79), Jodhpur(26.24,73.02), Udaipur(24.59,73.69)
+4. Maharashtra (महाराष्ट्र) — Mumbai(19.08,72.88), Pune(18.52,73.86), Nashik(20.00,73.79)
+5. Tamil Nadu (तमिलनाडु) — Chennai(13.08,80.27), Madurai(9.93,78.12), Coimbatore(11.02,76.96)
+6. Karnataka (कर्नाटक) — Bangalore(12.97,77.59), Mysore(12.30,76.66), Hubli(15.36,75.12)
+7. Gujarat (गुजरात) — Ahmedabad(23.02,72.57), Surat(21.17,72.83), Vadodara(22.31,73.19)
+8. West Bengal (पश्चिम बंगाल) — Kolkata(22.57,88.36), Howrah(22.59,88.31), Siliguri(26.73,88.40)
+9. Bihar (बिहार) — Patna(25.61,85.14), Gaya(24.79,85.00), Muzaffarpur(26.12,85.39)
+10. Telangana (तेलंगाना) — Hyderabad(17.39,78.49), Warangal(17.97,79.60), Karimnagar(18.44,79.13)
+11. Andhra Pradesh (आंध्र प्रदेश) — Visakhapatnam(17.69,83.22), Vijayawada(16.51,80.63), Tirupati(13.63,79.42)
+12. Haryana (हरियाणा) — Gurugram(28.46,77.03), Faridabad(28.41,77.31), Panipat(29.39,76.97)
+13. Punjab (पंजाब) — Ludhiana(30.90,75.85), Amritsar(31.63,74.87), Jalandhar(31.33,75.58)
+14. Odisha (ओडिशा) — Bhubaneswar(20.30,85.82), Cuttack(20.46,85.88), Rourkela(22.26,84.85)
+15. Jharkhand (झारखंड) — Ranchi(23.34,85.31), Jamshedpur(22.80,86.20), Dhanbad(23.79,86.43)
+16. Chhattisgarh (छत्तीसगढ़) — Raipur(21.25,81.63), Bilaspur(22.08,82.15), Durg(21.19,81.28)
+17. Assam (असम) — Guwahati(26.14,91.74), Jorhat(26.75,94.21), Dibrugarh(27.47,94.91)
+18. Kerala (केरल) — Thiruvananthapuram(8.52,76.94), Kochi(9.93,76.27), Kozhikode(11.26,75.78)
+
+Each district: 2 blocks with real tehsil names
+Each block: 2 villages with realistic Indian village names
+Each village: population 2000-10000, literacy 40-80%, 
+occupation (Agriculture/Labor/Mixed/Fishing), nearest_city 3-45km
+
+Script structure:
+def seed():
+    if State.query.first(): 
+        print("Locations already seeded")
+        return
+    # create all data
+    db.session.add_all(...)
+    db.session.commit()
+    print(f"Seeded {count} locations")
+
+if __name__ == '__main__':
+    from app import create_app
+    app = create_app()
+    with app.app_context():
+        seed()
+
+=== app/seed/seed_schemes.py ===
+Seed 16 REAL government schemes. Idempotent.
+
+1. PMEGP — Ministry of MSME, max 5000000, min 50000, rate 10.5%, 
+   subsidy 25%, tenure 5yr, all states, all categories,
+   url: https://www.kviconline.gov.in/pmegpportal/
+2. PMMY Mudra — Ministry of Finance, max 1000000, min 10000, 
+   rate 10%, subsidy 0%, tenure 5yr, all states, all categories,
+   url: https://www.mudra.org.in/
+3. Stand-Up India — Ministry of Finance, max 10000000, min 1000000, 
+   rate 8.5%, subsidy 0%, tenure 7yr, all states, all categories,
+   eligibility: ["SC/ST/Women entrepreneurs only"],
+   url: https://www.standupmitra.in/
+4. PMFME — Ministry of Food Processing, max 1000000, min 50000, 
+   rate 9%, subsidy 35%, tenure 5yr, all states,
+   categories: ["Flour Mill","Oil Mill","Papad Making","Agarbatti Making"],
+   url: https://pmfme.mofpi.gov.in/
+5. AIF — Ministry of Agriculture, max 20000000, min 100000, 
+   rate 7%, subsidy 3%, tenure 7yr, all states,
+   categories: ["Dairy Farm","Poultry Farm","Flour Mill","Oil Mill"],
+   url: https://agriinfra.dac.gov.in/
+6. DAY-NRLM — Ministry of Rural Development, max 1000000, min 10000, 
+   rate 7%, subsidy 3%, tenure 5yr, all states, all categories,
+   url: https://nrlm.gov.in/
+7. CGTMSE — Ministry of MSME, max 20000000, min 100000, 
+   rate 10%, subsidy 0%, tenure 5yr, all states, all categories,
+   eligibility: ["Collateral-free guarantee cover"],
+   url: https://www.cgtmse.in/
+8. ASPIRE — Ministry of MSME, max 5000000, min 100000, 
+   rate 9%, subsidy 30%, tenure 5yr, all states, all categories,
+   url: https://aspire.msme.gov.in/
+9. SFURTI — Ministry of MSME, max 5000000, min 500000, 
+   rate 0%, subsidy 100%, tenure 5yr, all states,
+   categories: ["Agarbatti Making","Papad Making","Tailoring Unit"],
+   eligibility: ["Traditional industry clusters"],
+   url: https://sfurti.msme.gov.in/
+10. PM-DAKSH — Ministry of Social Justice, max 500000, min 10000, 
+    rate 8%, subsidy 50%, tenure 5yr, all states, all categories,
+    eligibility: ["SC/ST/OBC entrepreneurs"],
+    url: https://pmdaksh.dosje.gov.in/
+11. NABARD Agri-Clinics — NABARD, max 2000000, min 100000, 
+    rate 8%, subsidy 36%, tenure 7yr, all states,
+    categories: ["Dairy Farm","Poultry Farm"],
+    url: https://www.nabard.org/
+12. KVIC Margin Money — KVIC, max 2500000, min 50000, 
+    rate 9%, subsidy 25%, tenure 5yr, all states, all categories,
+    url: https://www.kvic.org.in/
+13. UP Mukhyamantri Yuva Swarozgar — UP Government, max 2500000, 
+    min 50000, rate 9%, subsidy 25%, tenure 5yr, 
+    states: ["Uttar Pradesh"], all categories,
+    url: https://upmsme.in/
+14. MP Mukhyamantri Udyam Kranti — MP Government, max 5000000, 
+    min 100000, rate 8%, subsidy 30%, tenure 5yr,
+    states: ["Madhya Pradesh"], all categories,
+    url: https://msme.mp.gov.in/
+15. RJ Bhamashah Rojgar Srijan — RJ Government, max 1000000, 
+    min 25000, rate 9%, subsidy 25%, tenure 5yr,
+    states: ["Rajasthan"], all categories,
+    url: https://industries.rajasthan.gov.in/
+16. NULM — Ministry of Housing, max 200000, min 10000, 
+    rate 7%, subsidy 5%, tenure 3yr, all states, all categories,
+    eligibility: ["Urban poor", "SHG members"],
+    url: https://nulm.gov.in/
+
+=== app/seed/seed_categories.py ===
+Seed 10 business categories. Idempotent.
+
+1. Flour Mill / आटा चक्की — Manufacturing, 200000-500000, 25%, Medium, 12mo
+2. Dairy Farm / डेयरी फार्म — Manufacturing, 150000-400000, 30%, Medium, 10mo
+3. Poultry Farm / मुर्गी पालन — Manufacturing, 100000-300000, 20%, High, 8mo
+4. Mobile Repair Shop / मोबाइल रिपेयर — Service, 50000-200000, 40%, Low, 6mo
+5. Grocery Store / किराना दुकान — Trading, 100000-300000, 15%, Low, 8mo
+6. Tailoring Unit / सिलाई केंद्र — Service, 50000-150000, 35%, Low, 6mo
+7. Oil Mill / तेल मिल — Manufacturing, 300000-800000, 20%, Medium, 14mo
+8. Agarbatti Making / अगरबत्ती निर्माण — Manufacturing, 50000-200000, 30%, Medium, 8mo
+9. Papad Making / पापड़ निर्माण — Manufacturing, 50000-150000, 35%, Low, 6mo
+10. Brick Kiln / भट्ठा — Manufacturing, 500000-1500000, 25%, High, 18mo
+
+=== .env.example ===
+DATABASE_URL=sqlite:///pragatisahayak.db
+JWT_SECRET=change_this_to_random_string
+LLM_API_KEY=your_gemini_api_key
+FLASK_ENV=development
+PORT=5000
+
+=== .gitignore ===
+venv/
+__pycache__/
+*.pyc
+.env
+*.db
+.DS_Store
+.vscode/
+.idea/
+
+=== requirements.txt ===
+flask==3.1.1
+flask-cors==5.0.1
+flask-sqlalchemy==3.1.1
+psycopg2-binary==2.9.10
+python-dotenv==1.1.0
+PyJWT==2.10.1
+bcrypt==4.3.0
+reportlab==4.4.0
+google-generativeai==0.8.4
+gunicorn==23.0.0
+
+=== README.md ===
+Project: PragatiSahayak Backend
+Setup: pip install -r requirements.txt → copy .env.example to .env → 
+python -m app.seed.seed_locations → python -m app.seed.seed_schemes → 
+python -m app.seed.seed_categories → python run.py
+Test: http://localhost:5000/api/health
+
+IMPORTANT:
+- All models MUST have to_dict() methods
+- Seed scripts MUST be idempotent (safe to run multiple times)
+- Use SQLite as default (works on Replit without PostgreSQL)
+- Generate ALL files with COMPLETE code, no TODOs or placeholders
+- Do NOT create route files or service files — other team members 
+  will build those
