@@ -1,0 +1,371 @@
+Create 2 service files for "PragatiSahayak" Flask backend.
+Smart India Hackathon 2026 — AI business advisory for rural India.
+
+FILE 1: AI/RAG Engine (uses Google Gemini API)
+FILE 2: PDF Report Generator (uses ReportLab)
+
+CREATE THESE FILES:
+
+=== app/services/rag_engine.py ===
+
+import os
+import json
+
+def generate_rag_report(user_data, village, category, competitors, 
+                        matched_schemes, language="en"):
+    """
+    Generate AI-powered business advisory report using RAG.
+    
+    Parameters:
+    - user_data: dict with name, capital, language
+    - village: object with name, population, literacy_rate, 
+               primary_occupation, nearest_city_km
+    - category: object with name, sector, investment_min, 
+                investment_max, risk_level, typical_margin
+    - competitors: list of competitor objects
+    - matched_schemes: list of scheme dicts
+    - language: "en" or "hi"
+    
+    Returns: dict with market_summary, swot, threats, 
+             alternatives, roadmap, confidence
+    """
+    try:
+        import google.generativeai as genai
+        
+        api_key = os.environ.get('LLM_API_KEY', '')
+        if not api_key:
+            return _fallback_report(user_data, village, category, 
+                                   competitors, language)
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # Build context from real data (THIS IS THE "R" IN RAG)
+        comp_names = [c.name if hasattr(c, 'name') else str(c) 
+                     for c in (competitors or [])]
+        scheme_names = [s.get('name', '') if isinstance(s, dict) 
+                       else s.name for s in (matched_schemes or [])]
+        
+        lang_instruction = "Respond in Hindi (Devanagari script)." if language == "hi" else "Respond in English."
+        
+        context = f"""
+GROUND TRUTH DATA (USE ONLY THIS — DO NOT INVENT):
+- Entrepreneur: {user_data.get('name', 'User')}
+- Village: {village.name if hasattr(village, 'name') else 'Unknown'}
+- Population: {village.population if hasattr(village, 'population') else 'N/A'}
+- Literacy Rate: {village.literacy_rate if hasattr(village, 'literacy_rate') else 'N/A'}%
+- Primary Occupation: {village.primary_occupation if hasattr(village, 'primary_occupation') else 'N/A'}
+- Nearest City: {village.nearest_city_km if hasattr(village, 'nearest_city_km') else 'N/A'} km
+- Business: {category.name if hasattr(category, 'name') else 'Unknown'}
+- Sector: {category.sector if hasattr(category, 'sector') else 'N/A'}
+- Investment Range: Rs.{category.investment_min if hasattr(category, 'investment_min') else 0} - Rs.{category.investment_max if hasattr(category, 'investment_max') else 0}
+- Risk Level: {category.risk_level if hasattr(category, 'risk_level') else 'Medium'}
+- Typical Margin: {category.typical_margin if hasattr(category, 'typical_margin') else 20}%
+- Available Capital: Rs.{user_data.get('capital', 0)}
+- Competitors Nearby: {len(comp_names)} ({', '.join(comp_names[:5])})
+- Matched Government Schemes: {', '.join(scheme_names[:5])}
+"""
+        
+        prompt = f"""You are PragatiSahayak, an AI business advisor for 
+rural Indian entrepreneurs. {lang_instruction}
+
+RULES:
+1. ONLY use the ground truth data provided below
+2. NEVER invent government schemes, interest rates, or financial figures
+3. ALWAYS explain WHY you recommend something
+4. If data is insufficient, clearly state "Limited data available"
+5. Be specific with numbers from the context
+6. Output ONLY valid JSON matching the schema below
+
+{context}
+
+Generate a business advisory report in this exact JSON format:
+{{
+  "confidence": "High" or "Medium" or "Low",
+  "market_summary": "2-3 sentence analysis of local market demand...",
+  "market_analysis": {{
+    "demand_score": 75,
+    "target_customers": 1500,
+    "raw_material_availability": "High" or "Medium" or "Low",
+    "infrastructure_readiness": "High" or "Medium" or "Low",
+    "seasonal_factor": "Description of seasonal demand variation..."
+  }},
+  "swot": {{
+    "strengths": [
+      {{"point": "Low competition", "why": "Only 2 competitors within 10km"}}
+    ],
+    "weaknesses": [
+      {{"point": "Low literacy", "why": "58% literacy may limit skilled labor"}}
+    ],
+    "opportunities": [
+      {{"point": "Government subsidies", "why": "PMEGP offers 25% subsidy"}}
+    ],
+    "threats": [
+      {{"point": "Power supply", "why": "Rural areas face erratic electricity"}}
+    ]
+  }},
+  "threats": [
+    {{
+      "name": "Threat name",
+      "severity": "High" or "Medium" or "Low",
+      "description": "What could go wrong...",
+      "mitigation": "How to handle it..."
+    }}
+  ],
+  "roadmap": [
+    {{
+      "phase": "Month 1-2",
+      "title": "Registration & Planning",
+      "tasks": ["Udyam Registration", "Bank account", "Apply for scheme"],
+      "estimated_cost": 5000
+    }},
+    {{
+      "phase": "Month 3",
+      "title": "Setup & Procurement",
+      "tasks": ["Buy equipment", "Set up workspace"],
+      "estimated_cost": 150000
+    }},
+    {{
+      "phase": "Month 4",
+      "title": "Trial Run",
+      "tasks": ["Test equipment", "Train workers"],
+      "estimated_cost": 20000
+    }},
+    {{
+      "phase": "Month 5",
+      "title": "Soft Launch",
+      "tasks": ["Start limited operations", "Get feedback"],
+      "estimated_cost": 15000
+    }},
+    {{
+      "phase": "Month 6+",
+      "title": "Full Operations",
+      "tasks": ["Scale up", "Marketing"],
+      "estimated_cost": 10000
+    }}
+  ],
+  "pricing_suggestion": "Suggested pricing strategy based on local market...",
+  "alternatives": [
+    {{
+      "name": "Alternative Business Name",
+      "score": 78,
+      "investment_range": "Rs.1,00,000 - Rs.3,00,000",
+      "why": "Why this is a good alternative for this location..."
+    }}
+  ]
+}}"""
+        
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "response_mime_type": "application/json",
+                "temperature": 0.3
+            }
+        )
+        
+        result = json.loads(response.text)
+        return result
+        
+    except Exception as e:
+        print(f"RAG Engine Error: {str(e)}")
+        return _fallback_report(user_data, village, category, 
+                               competitors, language)
+
+
+def chat_with_ai(message, context, history=None, language="en"):
+    """
+    AI chat for follow-up questions about the business report.
+    """
+    try:
+        import google.generativeai as genai
+        
+        api_key = os.environ.get('LLM_API_KEY', '')
+        if not api_key:
+            return {
+                "reply": "AI chat is currently unavailable. Please check back later.",
+                "confidence": "Low",
+                "sources": []
+            }
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        lang_instruction = "Respond in Hindi." if language == "hi" else "Respond in English."
+        
+        system_prompt = f"""You are PragatiSahayak AI assistant. {lang_instruction}
+RULES: Only use provided context. Never invent schemes or numbers. 
+Explain why. If unsure, say so. Keep responses under 200 words.
+Limit to business advisory topics only.
+
+CONTEXT:
+Village: {context.get('village', 'Unknown')}
+Business: {context.get('category', 'Unknown')}
+State: {context.get('state', 'Unknown')}
+Capital: Rs.{context.get('capital', 0)}
+
+User Question: {message}"""
+        
+        response = model.generate_content(
+            system_prompt,
+            generation_config={"temperature": 0.4}
+        )
+        
+        return {
+            "reply": response.text,
+            "confidence": "High",
+            "sources": ["PragatiSahayak Database", "Government Scheme Records"]
+        }
+        
+    except Exception as e:
+        print(f"Chat Error: {str(e)}")
+        return {
+            "reply": "I'm unable to process your question right now. Please try again.",
+            "confidence": "Low",
+            "sources": []
+        }
+
+
+def _fallback_report(user_data, village, category, competitors, language):
+    """Template-based fallback when AI is unavailable."""
+    v_name = village.name if hasattr(village, 'name') else 'your area'
+    c_name = category.name if hasattr(category, 'name') else 'this business'
+    pop = village.population if hasattr(village, 'population') else 3000
+    comp_count = len(competitors) if competitors else 0
+    
+    return {
+        "confidence": "Low",
+        "market_summary": f"Based on available data, {c_name} in {v_name} "
+                         f"(population ~{pop}) shows moderate potential. "
+                         f"AI analysis unavailable — showing template report.",
+        "market_analysis": {
+            "demand_score": 60,
+            "target_customers": int(pop * 0.3),
+            "raw_material_availability": "Medium",
+            "infrastructure_readiness": "Medium",
+            "seasonal_factor": "Data unavailable"
+        },
+        "swot": {
+            "strengths": [
+                {"point": "Growing rural demand", "why": f"Population of {pop} indicates market potential"},
+                {"point": "Low competition" if comp_count < 3 else "Established market", 
+                 "why": f"{comp_count} competitors found nearby"}
+            ],
+            "weaknesses": [
+                {"point": "Limited data", "why": "AI analysis unavailable, using template"}
+            ],
+            "opportunities": [
+                {"point": "Government schemes", "why": "Multiple MSME schemes available"}
+            ],
+            "threats": [
+                {"point": "Infrastructure gaps", "why": "Rural areas may have limited facilities"}
+            ]
+        },
+        "threats": [
+            {"name": "Data Limitation", "severity": "Medium",
+             "description": "AI analysis unavailable",
+             "mitigation": "Consult local DIC for detailed analysis"}
+        ],
+        "roadmap": [
+            {"phase": "Month 1-2", "title": "Planning", 
+             "tasks": ["Market research", "Registration"], "estimated_cost": 5000},
+            {"phase": "Month 3-4", "title": "Setup", 
+             "tasks": ["Equipment", "Workspace"], "estimated_cost": 100000},
+            {"phase": "Month 5-6", "title": "Launch", 
+             "tasks": ["Operations", "Marketing"], "estimated_cost": 20000}
+        ],
+        "pricing_suggestion": "Consult local market for competitive pricing.",
+        "alternatives": []
+    }
+
+
+=== app/services/pdf_generator.py ===
+
+from io import BytesIO
+
+def generate_report_pdf(user_data, analysis_data):
+    """
+    Generate a professional 7-page PDF report.
+    
+    Parameters:
+    - user_data: dict with name, village, block, district, state, 
+                 category, capital, language
+    - analysis_data: dict from /api/analyze response
+    
+    Returns: bytes (PDF file content)
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm, cm
+    from reportlab.lib.colors import HexColor, white, black
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, 
+                                     Table, TableStyle, PageBreak, HRFlowable)
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+    from datetime import datetime
+    
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=20*mm,
+        leftMargin=20*mm,
+        topMargin=25*mm,
+        bottomMargin=20*mm
+    )
+    
+    # Colors
+    SAFFRON = HexColor('#FF9933')
+    GREEN = HexColor('#138808')
+    DARK = HexColor('#1a1a2e')
+    LIGHT_GRAY = HexColor('#f5f5f5')
+    
+    # Styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Title'],
+        fontSize=28, textColor=SAFFRON, alignment=TA_CENTER, spaceAfter=10)
+    subtitle_style = ParagraphStyle('Subtitle', parent=styles['Normal'],
+        fontSize=14, textColor=DARK, alignment=TA_CENTER, spaceAfter=5)
+    heading_style = ParagraphStyle('Heading', parent=styles['Heading2'],
+        fontSize=16, textColor=SAFFRON, spaceBefore=15, spaceAfter=8)
+    body_style = ParagraphStyle('Body', parent=styles['Normal'],
+        fontSize=10, textColor=DARK, alignment=TA_JUSTIFY, 
+        leading=14, spaceAfter=6)
+    small_style = ParagraphStyle('Small', parent=styles['Normal'],
+        fontSize=8, textColor=HexColor('#666666'), alignment=TA_CENTER)
+    
+    elements = []
+    
+    # ===== PAGE 1: COVER =====
+    elements.append(Spacer(1, 60*mm))
+    elements.append(Paragraph("PragatiSahayak", title_style))
+    elements.append(Paragraph("AI-Powered Business Advisory", subtitle_style))
+    elements.append(Spacer(1, 15*mm))
+    elements.append(HRFlowable(width="60%", thickness=2, color=SAFFRON, 
+                               spaceAfter=15))
+    elements.append(Paragraph("Business Feasibility Report", 
+                             ParagraphStyle('ReportTitle', parent=subtitle_style,
+                             fontSize=18, textColor=DARK)))
+    elements.append(Spacer(1, 20*mm))
+    
+    info_data = [
+        ["Entrepreneur:", user_data.get('name', 'N/A')],
+        ["Business:", user_data.get('category', 'N/A')],
+        ["Location:", f"{user_data.get('village', '')}, "
+                      f"{user_data.get('block', '')}, "
+                      f"{user_data.get('district', '')}, "
+                      f"{user_data.get('state', '')}"],
+        ["Capital:", f"Rs. {user_data.get('capital', 0):,}"],
+        ["Date:", datetime.now().strftime("%d %B %Y")]
+    ]
+    info_table = Table(info_data, colWidths=[40*mm, 100*mm])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 11),
+        ('TEXTCOLOR', (0, 0), (0, -1), SAFFRON),
+        ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 30*mm))
+    elements.append(Paragraph("Generated by PragatiSahayak AI Advisory System",
