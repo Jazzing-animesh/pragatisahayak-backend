@@ -1,0 +1,371 @@
+Create 3 pure-math calculation service files for "PragatiSahayak" 
+Flask backend. Smart India Hackathon 2026.
+
+CRITICAL: These files contain ONLY mathematical algorithms. 
+NO AI, NO LLM, NO database queries. Pure Python math. 
+These functions receive data as parameters and return results.
+
+CREATE THESE FILES:
+
+=== app/services/__init__.py ===
+Empty file (or import the 3 functions for convenience)
+
+=== app/services/viability.py ===
+
+def compute_viability(category, village, competitors, available_capital):
+    """
+    Calculate business viability score (0-100).
+    
+    Parameters:
+    - category: object with attributes: investment_min, investment_max, 
+                risk_level, typical_margin, sector
+    - village: object with attributes: population, literacy_rate, 
+               primary_occupation, nearest_city_km
+    - competitors: list of competitor objects
+    - available_capital: float/int, user's margin money in ₹
+    
+    Returns: dict with total_score, label, breakdown
+    """
+    
+    avg_investment = (category.investment_min + category.investment_max) / 2.0
+    
+    # 1. DEMAND SCORE (0-30 points)
+    # Higher population = more demand
+    # Agriculture occupation + manufacturing business = good match
+    demand_pts = min(30.0, village.population / 200.0)
+    
+    # Bonus if occupation matches business type
+    occupation = village.primary_occupation.lower()
+    sector = category.sector.lower()
+    if occupation == "agriculture" and sector == "manufacturing":
+        demand_pts = min(30.0, demand_pts + 3.0)
+    elif occupation == "mixed" and sector == "service":
+        demand_pts = min(30.0, demand_pts + 2.0)
+    
+    # 2. COMPETITION SCORE (0-25 points)
+    # Fewer competitors = higher score
+    comp_count = len(competitors) if competitors else 0
+    comp_pts = max(5.0, 25.0 - (comp_count * 5.0))
+    
+    # 3. CAPITAL MATCH SCORE (0-20 points)
+    # How well does user's capital match the investment needed?
+    if avg_investment > 0:
+        margin_ratio = available_capital / avg_investment
+    else:
+        margin_ratio = 1.0
+    
+    if margin_ratio >= 0.25:
+        cap_pts = 20.0
+    elif margin_ratio >= 0.15:
+        cap_pts = 16.0
+    elif margin_ratio >= 0.10:
+        cap_pts = 12.0
+    else:
+        cap_pts = 6.0
+    
+    # 4. INFRASTRUCTURE SCORE (0-15 points)
+    # Closer to city = better infrastructure
+    city_km = village.nearest_city_km
+    if city_km <= 10:
+        infra_pts = 15.0
+    elif city_km <= 20:
+        infra_pts = 12.0
+    elif city_km <= 30:
+        infra_pts = 8.0
+    else:
+        infra_pts = 5.0
+    
+    # 5. RISK FACTOR SCORE (0-10 points)
+    risk_map = {"low": 10.0, "medium": 7.0, "high": 4.0}
+    risk_pts = risk_map.get(category.risk_level.lower(), 7.0)
+    
+    # LITERACY BONUS (adjusts demand by ±2)
+    if village.literacy_rate >= 70:
+        demand_pts = min(30.0, demand_pts + 2.0)
+    elif village.literacy_rate < 45:
+        demand_pts = max(0.0, demand_pts - 2.0)
+    
+    # TOTAL
+    total = demand_pts + comp_pts + cap_pts + infra_pts + risk_pts
+    total_score = min(100, max(0, int(round(total))))
+    
+    # LABEL
+    if total_score >= 86:
+        label = "Excellent"
+    elif total_score >= 71:
+        label = "Very Good"
+    elif total_score >= 51:
+        label = "Good"
+    elif total_score >= 31:
+        label = "Below Average"
+    else:
+        label = "Poor"
+    
+    return {
+        "total_score": total_score,
+        "label": label,
+        "breakdown": {
+            "demand": int(round(demand_pts)),
+            "competition": int(round(comp_pts)),
+            "capital": int(round(cap_pts)),
+            "infrastructure": int(round(infra_pts)),
+            "risk": int(round(risk_pts))
+        }
+    }
+
+
+Also add a helper function:
+
+def get_alternatives(category, village, all_categories, competitors, capital):
+    """
+    Suggest 2-3 alternative businesses that might score higher.
+    
+    Parameters:
+    - category: current business category object
+    - village: village object
+    - all_categories: list of all BusinessCategory objects
+    - competitors: list of competitors
+    - capital: available capital
+    
+    Returns: list of dicts with category info and predicted score
+    """
+    alternatives = []
+    for cat in all_categories:
+        if cat.id == category.id:
+            continue
+        # Filter by capital feasibility
+        if cat.investment_min > capital * 5:
+            continue
+        score = compute_viability(cat, village, competitors, capital)
+        alternatives.append({
+            "category_id": cat.id,
+            "name": cat.name,
+            "name_hi": cat.name_hi,
+            "score": score["total_score"],
+            "label": score["label"],
+            "investment_min": cat.investment_min,
+            "investment_max": cat.investment_max,
+            "why": f"Based on local demand and competition in {village.name}, "
+                   f"{cat.name} shows a viability score of {score['total_score']}/100."
+        })
+    
+    # Sort by score descending, return top 3
+    alternatives.sort(key=lambda x: x["score"], reverse=True)
+    return alternatives[:3]
+
+
+=== app/services/loan_calc.py ===
+
+def calculate_emi(principal, annual_rate, tenure_years):
+    """
+    Calculate EMI using Reducing Balance Formula.
+    EMI = [P × R × (1+R)^N] / [(1+R)^N - 1]
+    
+    Parameters:
+    - principal: float, loan amount after subsidy (₹)
+    - annual_rate: float, annual interest rate (e.g., 10.5 for 10.5%)
+    - tenure_years: int, loan tenure in years
+    
+    Returns: tuple (monthly_emi, quarterly_emi, total_interest, 
+                    total_payment, amortization_list)
+    """
+    if principal <= 0:
+        return 0.0, 0.0, 0.0, 0.0, []
+    
+    if tenure_years <= 0:
+        return principal, principal * 3, 0.0, principal, []
+    
+    total_months = tenure_years * 12
+    
+    if annual_rate == 0:
+        monthly_emi = principal / total_months
+        total_payment = principal
+        total_interest = 0.0
+        monthly_rate = 0.0
+    else:
+        monthly_rate = (annual_rate / 12.0) / 100.0
+        factor = (1 + monthly_rate) ** total_months
+        monthly_emi = (principal * monthly_rate * factor) / (factor - 1)
+        total_payment = monthly_emi * total_months
+        total_interest = total_payment - principal
+    
+    quarterly_emi = monthly_emi * 3
+    
+    # Generate year-by-year amortization schedule
+    amortization = []
+    balance = principal
+    
+    for year in range(1, tenure_years + 1):
+        year_interest = 0.0
+        year_principal = 0.0
+        opening_balance = balance
+        
+        for month in range(12):
+            if balance <= 0:
+                break
+            interest_month = balance * monthly_rate
+            principal_month = monthly_emi - interest_month
+            if principal_month > balance:
+                principal_month = balance
+                interest_month = balance * monthly_rate
+            balance -= principal_month
+            year_interest += interest_month
+            year_principal += principal_month
+        
+        amortization.append({
+            "year": year,
+            "opening_balance": round(opening_balance, 2),
+            "emi_paid": round(year_interest + year_principal, 2),
+            "interest": round(year_interest, 2),
+            "principal": round(year_principal, 2),
+            "closing_balance": max(0.0, round(balance, 2))
+        })
+        
+        if balance <= 0:
+            break
+    
+    return (
+        round(monthly_emi, 2),
+        round(quarterly_emi, 2),
+        round(total_interest, 2),
+        round(total_payment, 2),
+        amortization
+    )
+
+
+def calculate_loan_details(investment, capital, scheme_dict):
+    """
+    Complete loan calculation given investment, capital, and scheme.
+    
+    Parameters:
+    - investment: total estimated investment (₹)
+    - capital: user's available margin money (₹)
+    - scheme_dict: dict with keys: interest_rate, subsidy_percent, 
+                   tenure_years, max_loan, min_loan
+    
+    Returns: dict with all loan details
+    """
+    loan_needed = max(0, investment - capital)
+    
+    if loan_needed == 0:
+        return {
+            "loan_needed": 0,
+            "subsidy_amount": 0,
+            "effective_loan": 0,
+            "monthly_emi": 0,
+            "quarterly_emi": 0,
+            "total_interest": 0,
+            "total_payment": 0,
+            "amortization": [],
+            "loan_readiness_score": 100
+        }
+    
+    subsidy_amount = loan_needed * (scheme_dict.get("subsidy_percent", 0) / 100.0)
+    effective_loan = loan_needed - subsidy_amount
+    
+    monthly_emi, quarterly_emi, total_interest, total_payment, amortization = \
+        calculate_emi(
+            effective_loan,
+            scheme_dict.get("interest_rate", 10.0),
+            scheme_dict.get("tenure_years", 5)
+        )
+    
+    # Loan Readiness Score (0-100)
+    margin_ratio = capital / investment if investment > 0 else 0
+    readiness = 0
+    if margin_ratio >= 0.25: readiness += 40
+    elif margin_ratio >= 0.15: readiness += 30
+    elif margin_ratio >= 0.10: readiness += 20
+    else: readiness += 10
+    
+    if scheme_dict.get("subsidy_percent", 0) >= 25: readiness += 30
+    elif scheme_dict.get("subsidy_percent", 0) > 0: readiness += 20
+    else: readiness += 10
+    
+    if effective_loan <= scheme_dict.get("max_loan", 0): readiness += 30
+    else: readiness += 10
+    
+    readiness = min(100, readiness)
+    
+    return {
+        "loan_needed": round(loan_needed, 2),
+        "subsidy_amount": round(subsidy_amount, 2),
+        "effective_loan": round(effective_loan, 2),
+        "interest_rate": scheme_dict.get("interest_rate", 10.0),
+        "tenure_years": scheme_dict.get("tenure_years", 5),
+        "monthly_emi": monthly_emi,
+        "quarterly_emi": quarterly_emi,
+        "total_interest": total_interest,
+        "total_payment": total_payment,
+        "amortization": amortization,
+        "loan_readiness_score": readiness
+    }
+
+
+=== app/services/scheme_matcher.py ===
+
+def match_schemes(category_name, state_name, loan_amount, all_schemes=None):
+    """
+    Match user with eligible government schemes.
+    
+    Parameters:
+    - category_name: string, business category name
+    - state_name: string, state name
+    - loan_amount: float/int, required loan amount (₹)
+    - all_schemes: list of scheme objects (from DB query). 
+      If None, returns empty list.
+    
+    Returns: list of matched scheme dicts with eligibility info
+    """
+    if not all_schemes:
+        return []
+    
+    matched = []
+    
+    for scheme in all_schemes:
+        # Skip inactive schemes
+        if not scheme.is_active:
+            continue
+        
+        # Check loan amount range
+        if loan_amount < scheme.min_loan or loan_amount > scheme.max_loan:
+            continue
+        
+        # Check state eligibility
+        applicable_states = scheme.applicable_states or ["All"]
+        if "All" not in applicable_states and state_name not in applicable_states:
+            continue
+        
+        # Check category eligibility
+        applicable_cats = scheme.applicable_categories or ["All"]
+        if "All" not in applicable_cats and category_name not in applicable_cats:
+            continue
+        
+        # Build eligibility explanation
+        reasons = []
+        reasons.append(f"Loan amount ₹{loan_amount:,.0f} is within the "
+                      f"₹{scheme.min_loan:,.0f} - ₹{scheme.max_loan:,.0f} range.")
+        if scheme.subsidy_percent > 0:
+            reasons.append(f"You get {scheme.subsidy_percent}% subsidy "
+                         f"(₹{loan_amount * scheme.subsidy_percent / 100:,.0f}).")
+        if state_name in (scheme.applicable_states or []):
+            reasons.append(f"This scheme is specifically available in {state_name}.")
+        
+        scheme_dict = scheme.to_dict() if hasattr(scheme, 'to_dict') else {}
+        scheme_dict["is_eligible"] = True
+        scheme_dict["why_eligible"] = " ".join(reasons)
+        matched.append(scheme_dict)
+    
+    # Sort by subsidy percentage descending (best deal first)
+    matched.sort(key=lambda x: x.get("subsidy_percent", 0), reverse=True)
+    
+    return matched
+
+
+IMPORTANT:
+- ALL functions must be pure Python math — NO imports from AI libraries
+- NO database queries inside these functions (data comes as parameters)
+- Handle edge cases: zero values, negative numbers, empty lists
+- All monetary values rounded to 2 decimal places
+- Include docstrings explaining parameters and return types
+- Generate COMPLETE code, no TODOs or placeholders
